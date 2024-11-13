@@ -1,0 +1,17 @@
+[package]
+name = "kvs"
+version = "0.1.0"
+edition = "2021"
+author = "Shubha be.shubh42@gmail.com"
+authors =  ["Shubh be.shubh42@gmail.com"]
+description = "A key value store"
+
+[dependencies]
+clap = { version = "4.5.20", features = ["derive"] }
+failure = { version = "0.1.8", features = ["derive"]}
+
+[dev-dependencies]
+assert_cmd = "0.11.0"
+predicates = "1.0.0"
+tempfile = "3.0.7"
+walkdir = "2.2.7"
