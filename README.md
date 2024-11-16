@@ -1,0 +1,1 @@
+### A simple rust key/value database built with bitcask algorithm
