@@ -1,4 +1,7 @@
-use clap::{Parser, Subcommand};
+use std::env;
+
+use clap::Parser;
+use kvs::KvStore;
 
 #[derive(Parser, Debug, Clone)]
 #[command(author = "Shubh")]
@@ -7,42 +10,33 @@ use clap::{Parser, Subcommand};
 #[command(about = env!("CARGO_PKG_DESCRIPTION"))]
 struct Cli {
     #[command(subcommand)]
-    cmd: Command,
+    cmd: kvs::Command,
 }
 
-#[derive(Subcommand, Debug, Clone)]
-enum Command {
-    Get {
-        key: String,
-    },
-    Set {
-        key: String,
-        value: String,
-    },
-    Rm {
-        key: String,
-    },
-    #[command(name = "-V")]
-    Version,
-}
-
-fn main() {
+fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    let path = env::current_dir().unwrap();
+    let mut store = KvStore::open(&path.as_path()).unwrap();
     match &cli.cmd {
-        Command::Get { key } => {
-            println!("args: {:?}", &cli.cmd);
-            panic!("unimplemented");
+        kvs::Command::Get { key } => {
+            let val = store.get(key.into()).unwrap();
+            if let Some(value) = val {
+                println!("{}", value);
+            } else {
+                print!("Key not found");
+            }
         }
-        Command::Set { key, value } => {
-            println!("args: {:?}", &cli.cmd);
-            panic!("unimplemented");
+        kvs::Command::Set { key, value } => store.set(key.into(), value.into())?,
+        kvs::Command::Rm { key } => {
+            let val = store.remove(key.into());
+            if let Err(_) = val {
+                print!("Key not found");
+                std::process::exit(1)
+            }
         }
-        Command::Rm { key } => {
-            println!("args: {:?}", &cli.cmd);
-            panic!("unimplemented")
-        }
-        Command::Version => {
+        kvs::Command::Version => {
             println!("{}", env!("CARGO_PKG_VERSION"))
         }
     }
+    Ok(())
 }
