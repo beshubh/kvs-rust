@@ -2,6 +2,7 @@ use std::env;
 
 use clap::Parser;
 use kvs::KvStore;
+use tempfile::TempDir;
 
 #[derive(Parser, Debug, Clone)]
 #[command(author = "Shubh")]
@@ -15,11 +16,15 @@ struct Cli {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let path = env::current_dir().unwrap();
-    let mut store = KvStore::open(&path.as_path()).unwrap();
+    // let temp_dir = TempDir::new().unwrap();
+    let mut store = KvStore::open(std::env::current_dir().unwrap().as_path()).unwrap();
     match &cli.cmd {
         kvs::Command::Get { key } => {
-            let val = store.get(key.into()).unwrap();
+            let val = store.get(key.into());
+            if val.is_err() {
+                println!("Error: {:?}", val);
+            }
+            let val = val.unwrap();
             if let Some(value) = val {
                 println!("{}", value);
             } else {
