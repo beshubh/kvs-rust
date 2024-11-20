@@ -48,8 +48,8 @@ impl KvStore {
     /// Open the path & builds a KvStore
     pub fn open(path: &Path) -> Result<Self> {
         let wals: Vec<WAL> = Vec::new();
+        let map = WAL::restore_state(path.into())?;
         let active_wal = WAL::new(path.into(), true)?;
-        let map = WAL::restore_state(&path)?;
         Ok(Self {
             map,
             wals,
@@ -163,7 +163,23 @@ struct WAL {
 }
 
 impl WAL {
-    fn new(path: PathBuf, active: bool) -> Result<Self> {
+    fn latest_wal_file(wal_dir: PathBuf) -> Result<Option<PathBuf>> {
+        let mut entries: Vec<_> = fs::read_dir(wal_dir)
+            .context("unable to read dir for restoring logs")?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|name| name.to_str())
+                    .map(|name| name.starts_with("wal_"))
+                    .unwrap_or(false)
+            })
+            .collect();
+        entries.sort();
+        Ok(entries.last().cloned())
+    }
+
+    fn new(wal_dir: PathBuf, active: bool) -> Result<Self> {
         let file_name = format!(
             "wal_{}",
             std::time::SystemTime::now()
@@ -171,7 +187,12 @@ impl WAL {
                 .unwrap()
                 .as_millis()
         );
-        let log_file_path = path.join(&file_name);
+        let mut log_file_path = wal_dir.join(&file_name);
+        let latest_log_file_path = Self::latest_wal_file(wal_dir.clone())?;
+        if latest_log_file_path.is_some() {
+            log_file_path = latest_log_file_path.unwrap()
+        }
+
         let mut writer = OpenOptions::new()
             .append(true)
             .create(true)
@@ -188,22 +209,14 @@ impl WAL {
         })
     }
 
-    fn restore_state(path: &Path) -> Result<HashMap<String, u64>> {
+    fn restore_state(wal_dir: PathBuf) -> Result<HashMap<String, u64>> {
         let mut map: HashMap<String, u64> = HashMap::new();
-        let mut entries: Vec<_> = fs::read_dir(path)
-            .context("unable to read dir for restoring logs")?
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| {
-                p.file_name()
-                    .and_then(|name| name.to_str())
-                    .map(|name| name.starts_with("wal_"))
-                    .unwrap_or(false)
-            })
-            .collect();
-        entries.sort();
+        let latest_log_file_path = Self::latest_wal_file(wal_dir)?;
+        if latest_log_file_path.is_none() {
+            return Ok(map);
+        }
 
-        let latest_log_file_path = entries.last().cloned().unwrap();
+        let latest_log_file_path = latest_log_file_path.unwrap();
 
         let mut log_file =
             File::open(&latest_log_file_path).context("failed to open file for restoring state")?;
