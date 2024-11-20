@@ -35,11 +35,13 @@ pub enum Command {
     Version,
 }
 
+const MAX_WAL_SIZE_THRESHOLD: u64 = 2000;
+
 /// A key-value store for storing string pairs
 pub struct KvStore {
     map: HashMap<String, u64>,
-    wals: Vec<WAL>,
     active_wal: WAL,
+    path: PathBuf,
 }
 
 pub type Result<T> = anyhow::Result<T>;
@@ -47,13 +49,12 @@ pub type Result<T> = anyhow::Result<T>;
 impl KvStore {
     /// Open the path & builds a KvStore
     pub fn open(path: &Path) -> Result<Self> {
-        let wals: Vec<WAL> = Vec::new();
         let map = WAL::restore_state(path.into())?;
-        let active_wal = WAL::new(path.into(), true)?;
+        let active_wal = WAL::new(path.into(), false)?;
         Ok(Self {
             map,
-            wals,
             active_wal,
+            path: path.into(),
         })
     }
     /// Retrieves the value associated with the given key
@@ -82,12 +83,6 @@ impl KvStore {
                 .reader
                 .seek(io::SeekFrom::Start(offset.to_owned()))?;
             let mut length_buffer = [0u8; 4];
-            /*
-            FIXME: when we restore the state we populate the in memory index with
-            file pointers of old wal files and then create a new emtpy active wal file
-            to fix this we can assume that the latest file is correct log file and contains all the logs
-            and restore just from that file, this will simplify the design.
-             */
             self.active_wal
                 .reader
                 .read_exact(&mut length_buffer)
@@ -128,6 +123,9 @@ impl KvStore {
         };
         let offset = self.active_wal.write_log(cmd)?;
         self.map.insert(key, offset);
+        if self.active_wal.size()? >= MAX_WAL_SIZE_THRESHOLD {
+            self.run_compaction().context("Failed to run compaction")?;
+        }
         Ok(())
     }
 
@@ -153,13 +151,36 @@ impl KvStore {
         }
         Err(anyhow::anyhow!("Key not found"))
     }
+
+    fn run_compaction(&mut self) -> Result<()> {
+        let mut new_map = HashMap::new();
+        let mut new_wal = WAL::new(self.path.clone(), true)?;
+        // FIXME: find a rust way to do this, rn I am just cloning
+        for (key, _) in self.map.clone().into_iter() {
+            let value = self.get(key.to_owned())?;
+            if value.is_none() {
+                continue;
+            }
+            let cmd = Command::Set {
+                key: key.to_owned(),
+                value: value.unwrap(),
+            };
+            let write_offset = new_wal.write_log(cmd)?;
+            new_map.insert(key.to_owned(), write_offset);
+        }
+        fs::remove_file::<PathBuf>(self.active_wal.path.clone())
+            .context("failed to remove old wal file")?;
+        self.active_wal = new_wal;
+        self.map = new_map;
+        Ok(())
+    }
 }
 
 struct WAL {
     reader: File,
     writer: File,
     current_write_offset: u64,
-    active: bool,
+    path: PathBuf,
 }
 
 impl WAL {
@@ -179,7 +200,11 @@ impl WAL {
         Ok(entries.last().cloned())
     }
 
-    fn new(wal_dir: PathBuf, active: bool) -> Result<Self> {
+    fn size(&self) -> Result<u64> {
+        Ok(self.reader.metadata()?.len())
+    }
+
+    fn new(wal_dir: PathBuf, force_new: bool) -> Result<Self> {
         let file_name = format!(
             "wal_{}",
             std::time::SystemTime::now()
@@ -189,7 +214,7 @@ impl WAL {
         );
         let mut log_file_path = wal_dir.join(&file_name);
         let latest_log_file_path = Self::latest_wal_file(wal_dir.clone())?;
-        if latest_log_file_path.is_some() {
+        if latest_log_file_path.is_some() && !force_new {
             log_file_path = latest_log_file_path.unwrap()
         }
 
@@ -205,7 +230,7 @@ impl WAL {
             reader: File::open(&log_file_path).unwrap(),
             writer,
             current_write_offset,
-            active,
+            path: log_file_path,
         })
     }
 
