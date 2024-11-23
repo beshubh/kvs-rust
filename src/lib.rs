@@ -4,6 +4,7 @@ pub mod client;
 pub mod common;
 pub mod engines;
 pub mod error;
+pub mod resp;
 pub mod server;
 
 pub use engines::{KvStore, KvsEngine};
