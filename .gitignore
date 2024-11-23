@@ -2,4 +2,6 @@
 wal/
 wal_*
 wal
+.env
+
 
