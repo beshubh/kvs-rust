@@ -1,8 +1,7 @@
 use std::env;
 
 use clap::Parser;
-use kvs::KvStore;
-use tempfile::TempDir;
+use kvs::{client, KvStore};
 
 #[derive(Parser, Debug, Clone)]
 #[command(author = "Shubh")]
@@ -11,15 +10,14 @@ use tempfile::TempDir;
 #[command(about = env!("CARGO_PKG_DESCRIPTION"))]
 struct Cli {
     #[command(subcommand)]
-    cmd: kvs::Command,
+    cmd: client::Command,
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() -> kvs::Result<()> {
     let cli = Cli::parse();
-    // let temp_dir = TempDir::new().unwrap();
     let mut store = KvStore::open(std::env::current_dir().unwrap().as_path()).unwrap();
     match &cli.cmd {
-        kvs::Command::Get { key } => {
+        client::Command::Get { key } => {
             let val = store.get(key.into());
             if val.is_err() {
                 println!("Error: {:?}", val);
@@ -31,15 +29,15 @@ fn main() -> anyhow::Result<()> {
                 print!("Key not found");
             }
         }
-        kvs::Command::Set { key, value } => store.set(key.into(), value.into())?,
-        kvs::Command::Rm { key } => {
+        client::Command::Set { key, value } => store.set(key.into(), value.into())?,
+        client::Command::Rm { key } => {
             let val = store.remove(key.into());
             if let Err(_) = val {
                 print!("Key not found");
                 std::process::exit(1)
             }
         }
-        kvs::Command::Version => {
+        client::Command::Version => {
             println!("{}", env!("CARGO_PKG_VERSION"))
         }
     }
