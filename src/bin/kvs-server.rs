@@ -1,4 +1,4 @@
-use std::net::TcpListener;
+use std::{io::Read, net::TcpListener};
 
 use log::{error, info};
 
@@ -35,9 +35,12 @@ fn main() -> Result<()> {
     let listener = listener.unwrap();
     match listener.accept() {
         Err(e) => eprintln!("could not bind to address: {}, err:{}", addr, e),
-        Ok(stream) => {
-            info!("new connection");
-        }
+        Ok((mut stream, _)) => loop {
+            let mut buf: Vec<u8> = Vec::new();
+            stream.read(&mut buf).unwrap();
+            let value = String::from_utf8(buf).unwrap();
+            info!("received: {}", value);
+        },
     }
     Ok(())
 }

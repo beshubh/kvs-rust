@@ -89,15 +89,11 @@ impl<'a> ser::Serializer for &'a mut Serializer {
     }
 
     fn serialize_bytes(self, v: &[u8]) -> Result<String> {
-        if v.len() == 0 {
-            Ok("$-1\r\n".into())
-        } else {
-            let mut output = format!("${}\r\n", v.len());
-            for &byte in v {
-                output.push(byte as char);
-            }
-            Ok(output)
+        let mut output = format!("${}\r\n", v.len());
+        for &byte in v {
+            output.push(byte as char);
         }
+        Ok(output)
     }
 
     fn serialize_none(self) -> Result<String> {

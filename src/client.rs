@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Subcommand, Deserialize, Serialize, Debug, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum Command {
+    #[command[name="PING"]]
+    Ping,
     Get {
         #[serde(rename = "k")]
         key: String,
