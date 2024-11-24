@@ -1,5 +1,5 @@
 use std::{
-    io::{self, BufRead, BufReader},
+    io::{self, BufRead, BufReader, Read},
     net::{TcpListener, TcpStream},
 };
 
@@ -31,14 +31,16 @@ fn handle_client(stream: TcpStream) -> io::Result<()> {
     let mut reader = BufReader::new(stream.try_clone()?);
     loop {
         let mut line = String::new();
-        match reader.read_line(&mut line) {
+        let mut buf: Vec<u8> = Vec::new();
+        match reader.read_to_end(&mut buf) {
             Ok(0) => {
                 info!("connection closed");
                 break;
             }
-            Ok(_) => {
-                info!("received instruction: {}", line);
-                let resp_value = resp::from_str(&line).unwrap();
+            Ok(size) => {
+                let s = std::str::from_utf8(&buf[..size]).unwrap();
+                info!("received instruction: {}", s);
+                let resp_value = resp::from_str(s).unwrap();
                 info!("received resp: {:?}", resp_value);
             }
             Err(e) => {
