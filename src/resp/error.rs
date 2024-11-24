@@ -15,6 +15,10 @@ pub enum RespError {
     ExpectedArray,
     ExpectedInteger,
     ExpectedSimpleString,
+    ExpectedBulkString,
+    ExpectedBoolean,
+    TrailingCharacters,
+    ExpectedNull,
 }
 
 impl ser::Error for RespError {
@@ -47,6 +51,12 @@ impl Display for RespError {
             RespError::ExpectedSimpleString => {
                 f.write_str("invalid content expected simple strings")
             }
+            RespError::TrailingCharacters => {
+                f.write_str("trailing characaters left in input while deserializing")
+            }
+            RespError::ExpectedBoolean => f.write_str("expected boolean"),
+            RespError::ExpectedBulkString => f.write_str("expted bulkstring"),
+            RespError::ExpectedNull => f.write_str("expected null"),
         }
     }
 }

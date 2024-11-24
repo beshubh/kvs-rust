@@ -3,6 +3,8 @@ mod error;
 mod ser;
 
 // pub use de::{from_string, DeSerializer};
+pub use crate::resp::de::{from_str, Deserializer};
+pub use crate::resp::ser::{to_string, Serializer};
 use serde::{ser::SerializeSeq, Deserialize, Serialize};
 
 #[derive(Deserialize)]
@@ -23,17 +25,12 @@ impl Serialize for RespValue {
             RespValue::SimpleString(s) => serializer.serialize_str(s),
             RespValue::Err(e) => serializer.serialize_str(e),
             RespValue::Integer(i) => serializer.serialize_u64(*i),
-            RespValue::BulkString(opt) => {
-                match opt {
-                    None => {
-                        // Null bulk string: $-1\r\n
-                        serializer.serialize_str("$-1\r\n")
-                    }
-                    Some(bytes) => serializer.serialize_bytes(&bytes),
-                }
-            }
+            RespValue::BulkString(opt) => match opt {
+                None => serializer.serialize_str("$-1\r\n"),
+                Some(bytes) => serializer.serialize_bytes(&bytes),
+            },
             RespValue::Array(opt) => match opt {
-                None => serializer.serialize_none(),
+                None => serializer.serialize_str("*-1\r\n"),
                 Some(arr) => {
                     let mut seq = serializer.serialize_seq(Some(arr.len()))?;
                     for value in arr {
