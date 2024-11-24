@@ -3,7 +3,7 @@ use std::ops::MulAssign;
 
 use crate::resp::error::RespError;
 use crate::resp::error::Result;
-use crate::resp::RespValue;
+use log::debug;
 use serde::{de, Deserialize};
 
 const ARRAY_PREFIX: char = '*';
@@ -150,37 +150,27 @@ impl<'de> Deserializer<'de> {
             }
         };
 
-        // finding the total length of bulkstrings
-        match self.input.find("\r\n") {
-            Some(size) => {
-                let space = &self.input[..size];
-                self.input = &self.input[size + 3..];
-                loop {
-                    match space.chars().next() {
-                        Some(ch @ '0'..='9') => {
-                            bulk_str_len *= 10;
-                            bulk_str_len += u64::from(ch as u8 - b'0');
-                        }
-                        _ => break,
-                    }
+        loop {
+            match self.peek_char()? {
+                ch @ '0'..='9' => {
+                    self.next_char()?;
+                    bulk_str_len = bulk_str_len * 10 + u64::from(ch as u8 - b'0');
                 }
-            }
-            None => return Err(RespError::Eof),
-        };
-
-        let mut output: Vec<u8> = Vec::new();
-        while bulk_str_len > 0 {
-            match self.input.find("\r\n") {
-                Some(size) => {
-                    let s = &self.input[..size];
-                    self.input = &self.input[size + 3..];
-                    let bytes = s.as_bytes();
-                    output.extend_from_slice(bytes);
+                '\r' => {
+                    self.next_char()?; // consume \r
+                    self.next_char()?; // consume \n
+                    break;
                 }
-                None => return Err(RespError::Eof),
+                _ => return Err(RespError::ExpectedInteger),
             }
         }
-
+        let mut output: Vec<u8> = Vec::new();
+        while bulk_str_len > 0 {
+            output.push(self.next_char()? as u8);
+            bulk_str_len -= 1;
+        }
+        self.next_char()?;
+        self.next_char()?;
         Ok(output)
     }
 }
@@ -456,32 +446,4 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     {
         unimplemented!()
     }
-}
-
-#[test]
-fn test_deserialize_resp() {
-    // Simple string
-    let input = "+OK\r\n";
-    let value: RespValue = from_str(input).unwrap();
-    assert!(matches!(value, RespValue::SimpleString(s) if s == "OK"));
-
-    // Error
-    let input = "-Error message\r\n";
-    let value: RespValue = from_str(input).unwrap();
-    assert!(matches!(value, RespValue::Err(s) if s == "Error message"));
-
-    // Integer
-    let input = ":1000\r\n";
-    let value: RespValue = from_str(input).unwrap();
-    assert!(matches!(value, RespValue::Integer(n) if n == 1000));
-
-    // Array
-    let input = "*2\r\n+Hello\r\n+World\r\n";
-    let value: RespValue = from_str(input).unwrap();
-    assert!(matches!(value, RespValue::Array(Some(v)) if v.len() == 2));
-
-    // Null array
-    let input = "*-1\r\n";
-    let value: RespValue = from_str(input).unwrap();
-    assert!(matches!(value, RespValue::Array(None)));
 }

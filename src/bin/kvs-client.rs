@@ -9,6 +9,7 @@ use log::{error, info};
 use std::env;
 use std::io::Write;
 use std::net::TcpStream;
+use std::vec;
 
 #[derive(Parser, Debug, Clone)]
 #[command(author = "Shubh")]
@@ -41,11 +42,14 @@ fn main() -> Result<()> {
                     stream.write(value.as_bytes()).unwrap();
                 }
                 client::Command::Set { key, value } => {
-                    let buf = format!("set {} {}", key, value);
-                    let s = buf.as_bytes();
-                    let cmd = resp::RespValue::BulkString(Some(s.into()));
+                    let buf = vec![
+                        resp::RespValue::BulkString(Some(b"set".into())),
+                        resp::RespValue::BulkString(Some(key.as_bytes().into())),
+                        resp::RespValue::BulkString(Some(value.as_bytes().into())),
+                    ];
+                    let cmd = resp::RespValue::Array(Some(buf));
                     let value = resp::to_string(&cmd).unwrap();
-                    info!("command: {:?}", cmd);
+                    info!("command: {:?}, value: {}", cmd, value);
                     stream.write_all(value.as_bytes()).unwrap();
                 }
                 _ => {

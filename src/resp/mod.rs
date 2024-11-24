@@ -56,7 +56,7 @@ pub fn from_str<'a>(s: &'a str) -> error::Result<RespValue> {
             deserializer.parse_string().unwrap().to_string(),
         )),
         '*' => {
-            if deserializer.next_char()? != '$' {
+            if deserializer.next_char()? != '*' {
                 return Err(error::RespError::ExpectedArray);
             }
             let mut len = match deserializer.next_char()? {
@@ -70,7 +70,6 @@ pub fn from_str<'a>(s: &'a str) -> error::Result<RespValue> {
                         len = len * 10 + u64::from(ch as u8 - b'0');
                     }
                     '\r' => {
-                        // Consume \r\n
                         deserializer.next_char()?; // consume \r
                         deserializer.next_char()?; // consume \n
                         break;
@@ -80,6 +79,10 @@ pub fn from_str<'a>(s: &'a str) -> error::Result<RespValue> {
             }
             let mut output: Vec<RespValue> = Vec::new();
             loop {
+                if let Err(_) = deserializer.peek_char() {
+                    // eof
+                    break;
+                }
                 match deserializer.peek_char()? {
                     ':' => output.push(RespValue::Integer(
                         deserializer.parse_unsigned::<u64>().unwrap(),
@@ -90,7 +93,9 @@ pub fn from_str<'a>(s: &'a str) -> error::Result<RespValue> {
                     '+' => output.push(RespValue::SimpleString(
                         deserializer.parse_string().unwrap().to_string(),
                     )),
-                    _ => break,
+                    _ => {
+                        panic!("unexpected character in input string")
+                    }
                 }
             }
 

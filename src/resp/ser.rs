@@ -95,6 +95,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
         for &byte in v {
             output.push(byte as char);
         }
+        output.push_str("\r\n");
         Ok(output)
     }
 
