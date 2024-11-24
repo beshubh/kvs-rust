@@ -3,19 +3,20 @@ use std::ops::MulAssign;
 
 use crate::resp::error::RespError;
 use crate::resp::error::Result;
+use crate::resp::RespValue;
 use serde::{de, Deserialize};
 
 const ARRAY_PREFIX: char = '*';
 const CRLF: &str = "\r\n";
 
-struct SeqAccess<'a, 'de: 'a> {
+pub struct SeqAccess<'a, 'de: 'a> {
     de: &'a mut Deserializer<'de>,
     len: usize,
     current: usize,
 }
 
 impl<'a, 'de> SeqAccess<'a, 'de> {
-    fn new(de: &'a mut Deserializer<'de>, len: usize) -> Self {
+    pub fn new(de: &'a mut Deserializer<'de>, len: usize) -> Self {
         SeqAccess {
             de,
             len,
@@ -39,7 +40,7 @@ impl<'de, 'a> de::SeqAccess<'de> for SeqAccess<'a, 'de> {
     }
 }
 pub struct Deserializer<'de> {
-    input: &'de str,
+    pub input: &'de str,
 }
 
 impl<'de> Deserializer<'de> {
@@ -62,17 +63,17 @@ where
 }
 
 impl<'de> Deserializer<'de> {
-    fn peek_char(&mut self) -> Result<char> {
+    pub fn peek_char(&mut self) -> Result<char> {
         self.input.chars().next().ok_or(RespError::Eof)
     }
 
-    fn next_char(&mut self) -> Result<char> {
+    pub fn next_char(&mut self) -> Result<char> {
         let ch = self.peek_char()?;
         self.input = &self.input[ch.len_utf8()..];
         Ok(ch)
     }
 
-    fn parse_bool(&mut self) -> Result<bool> {
+    pub fn parse_bool(&mut self) -> Result<bool> {
         if self.input.starts_with("#t\r\n") {
             self.input = &self.input["#t\r\n".len()..];
             return Ok(true);
@@ -83,7 +84,7 @@ impl<'de> Deserializer<'de> {
         Err(RespError::ExpectedBoolean)
     }
 
-    fn parse_unsigned<T>(&mut self) -> Result<T>
+    pub fn parse_unsigned<T>(&mut self) -> Result<T>
     where
         T: AddAssign<T> + MulAssign + From<u8>,
     {
@@ -115,14 +116,14 @@ impl<'de> Deserializer<'de> {
         }
     }
 
-    fn parse_signed<T>(&mut self) -> Result<T>
+    pub fn parse_signed<T>(&mut self) -> Result<T>
     where
         T: AddAssign<T> + MulAssign + From<i8>,
     {
         unimplemented!();
     }
 
-    fn parse_string(&mut self) -> Result<&'de str> {
+    pub fn parse_string(&mut self) -> Result<&'de str> {
         if self.next_char()? != '+' {
             return Err(RespError::ExpectedSimpleString);
         }
@@ -136,7 +137,7 @@ impl<'de> Deserializer<'de> {
         }
     }
 
-    fn parse_bytes(&mut self) -> Result<Vec<u8>> {
+    pub fn parse_bytes(&mut self) -> Result<Vec<u8>> {
         if self.next_char()? != '$' {
             return Err(RespError::ExpectedBulkString);
         }
@@ -199,6 +200,18 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
             '*' => self.deserialize_seq(visitor),
             _ => Err(RespError::Syntax),
         }
+    }
+
+    fn deserialize_enum<V>(
+        self,
+        _name: &'static str,
+        _variants: &'static [&'static str],
+        _visitor: V,
+    ) -> Result<V::Value>
+    where
+        V: de::Visitor<'de>,
+    {
+        unimplemented!()
     }
 
     fn deserialize_i64<V>(self, visitor: V) -> Result<V::Value>
@@ -391,18 +404,6 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
         visitor.visit_seq(seq)
     }
 
-    fn deserialize_enum<V>(
-        self,
-        _name: &'static str,
-        _variants: &'static [&'static str],
-        _visitor: V,
-    ) -> std::result::Result<V::Value, Self::Error>
-    where
-        V: de::Visitor<'de>,
-    {
-        unimplemented!()
-    }
-
     fn deserialize_identifier<V>(self, _visitor: V) -> std::result::Result<V::Value, Self::Error>
     where
         V: de::Visitor<'de>,
@@ -455,4 +456,32 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     {
         unimplemented!()
     }
+}
+
+#[test]
+fn test_deserialize_resp() {
+    // Simple string
+    let input = "+OK\r\n";
+    let value: RespValue = from_str(input).unwrap();
+    assert!(matches!(value, RespValue::SimpleString(s) if s == "OK"));
+
+    // Error
+    let input = "-Error message\r\n";
+    let value: RespValue = from_str(input).unwrap();
+    assert!(matches!(value, RespValue::Err(s) if s == "Error message"));
+
+    // Integer
+    let input = ":1000\r\n";
+    let value: RespValue = from_str(input).unwrap();
+    assert!(matches!(value, RespValue::Integer(n) if n == 1000));
+
+    // Array
+    let input = "*2\r\n+Hello\r\n+World\r\n";
+    let value: RespValue = from_str(input).unwrap();
+    assert!(matches!(value, RespValue::Array(Some(v)) if v.len() == 2));
+
+    // Null array
+    let input = "*-1\r\n";
+    let value: RespValue = from_str(input).unwrap();
+    assert!(matches!(value, RespValue::Array(None)));
 }

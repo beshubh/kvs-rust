@@ -1,3 +1,4 @@
+use clap::builder::Str;
 use clap::Parser;
 use env_logger;
 use kvs::client;
@@ -32,12 +33,20 @@ fn main() -> Result<()> {
         Err(e) => error!("count not connect to server at: {}, err: {}", addr, e),
         Ok(mut stream) => {
             info!("connected to server at: {}", addr);
-            info!("connect to cli cmd: {:?}", cli.cmd);
             match &cli.cmd {
                 client::Command::Ping => {
                     let ping = resp::RespValue::SimpleString("PING".into());
                     let value = resp::to_string(&ping).unwrap();
+                    info!("command: {}", value);
                     stream.write(value.as_bytes()).unwrap();
+                }
+                client::Command::Set { key, value } => {
+                    let buf = format!("set {} {}", key, value);
+                    let s = buf.as_bytes();
+                    let cmd = resp::RespValue::BulkString(Some(s.into()));
+                    let value = resp::to_string(&cmd).unwrap();
+                    info!("command: {:?}", cmd);
+                    stream.write_all(value.as_bytes()).unwrap();
                 }
                 _ => {
                     info!("command: {:?}", cli.cmd);

@@ -1,9 +1,16 @@
-use std::{io::Read, net::TcpListener};
+use std::{
+    io::{self, BufRead, BufReader},
+    net::{TcpListener, TcpStream},
+};
 
 use log::{error, info};
 
 use clap::Parser;
-use kvs::{common, server, Result};
+use kvs::{
+    common,
+    resp::{self, RespValue},
+    server, Result,
+};
 
 #[derive(Parser, Debug, Clone)]
 #[command(author = "Shubh")]
@@ -20,6 +27,29 @@ struct Cli {
     engine: Option<String>,
 }
 
+fn handle_client(stream: TcpStream) -> io::Result<()> {
+    let mut reader = BufReader::new(stream.try_clone()?);
+    loop {
+        let mut line = String::new();
+        match reader.read_line(&mut line) {
+            Ok(0) => {
+                info!("connection closed");
+                break;
+            }
+            Ok(_) => {
+                info!("received instruction: {}", line);
+                let resp_value = resp::from_str(&line).unwrap();
+                info!("received resp: {:?}", resp_value);
+            }
+            Err(e) => {
+                error!("Error reading from client: {}", e);
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     dotenv::dotenv().ok();
     env_logger::init();
@@ -33,14 +63,15 @@ fn main() -> Result<()> {
         return Err(kvs::KvsError::Message(" could not bind to address".into()));
     }
     let listener = listener.unwrap();
-    match listener.accept() {
-        Err(e) => eprintln!("could not bind to address: {}, err:{}", addr, e),
-        Ok((mut stream, _)) => loop {
-            let mut buf: Vec<u8> = Vec::new();
-            stream.read(&mut buf).unwrap();
-            let value = String::from_utf8(buf).unwrap();
-            info!("received: {}", value);
-        },
+    for stream in listener.incoming() {
+        match stream {
+            Err(e) => error!("could not bind to address: {}, err:{}", addr, e),
+            Ok(stream) => {
+                if let Err(e) = handle_client(stream) {
+                    error!("error handling client: {}", e);
+                }
+            }
+        }
     }
     Ok(())
 }

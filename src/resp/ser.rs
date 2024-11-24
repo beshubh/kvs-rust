@@ -84,7 +84,9 @@ impl<'a> ser::Serializer for &'a mut Serializer {
     }
 
     fn serialize_str(self, v: &str) -> Result<String> {
+        println!("Okay I am comming here: {}", v);
         let output = format!("+{}\r\n", v);
+        println!("Ok, this is the output: {}", output);
         Ok(output)
     }
 
