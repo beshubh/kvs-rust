@@ -3,7 +3,6 @@ use std::ops::MulAssign;
 
 use crate::resp::error::RespError;
 use crate::resp::error::Result;
-use log::debug;
 use serde::{de, Deserialize};
 
 const ARRAY_PREFIX: char = '*';

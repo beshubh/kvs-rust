@@ -1,16 +1,14 @@
 use std::{
-    io::{self, BufRead, BufReader, Read},
+    env,
+    io::{self, BufReader, Read},
     net::{TcpListener, TcpStream},
 };
 
 use log::{error, info};
 
 use clap::Parser;
-use kvs::{
-    common,
-    resp::{self, RespValue},
-    server, Result,
-};
+use kvs::{common, server, Result};
+use kvs::{resp, KvStore};
 
 #[derive(Parser, Debug, Clone)]
 #[command(author = "Shubh")]
@@ -27,10 +25,9 @@ struct Cli {
     engine: Option<String>,
 }
 
-fn handle_client(stream: TcpStream) -> io::Result<()> {
+fn handle_client(mut stream: TcpStream, store: &mut KvStore) -> io::Result<()> {
     let mut reader = BufReader::new(stream.try_clone()?);
     loop {
-        let mut line = String::new();
         let mut buf: Vec<u8> = Vec::new();
         match reader.read_to_end(&mut buf) {
             Ok(0) => {
@@ -39,9 +36,9 @@ fn handle_client(stream: TcpStream) -> io::Result<()> {
             }
             Ok(size) => {
                 let s = std::str::from_utf8(&buf[..size]).unwrap();
-                info!("received instruction: {}", s);
-                let resp_value = resp::from_str(s).unwrap();
-                info!("received resp: {:?}", resp_value);
+                let resp = common::parse_resp(s).unwrap().1;
+                let command = common::parse_command(&resp).unwrap();
+                server::handle_command(&command, &mut stream, store).unwrap();
             }
             Err(e) => {
                 error!("Error reading from client: {}", e);
@@ -64,12 +61,13 @@ fn main() -> Result<()> {
         error!("could not bind to address: {}, error: {}", addr, e);
         return Err(kvs::KvsError::Message(" could not bind to address".into()));
     }
+    let mut store = KvStore::open(&env::current_dir().unwrap()).unwrap();
     let listener = listener.unwrap();
     for stream in listener.incoming() {
         match stream {
             Err(e) => error!("could not bind to address: {}, err:{}", addr, e),
             Ok(stream) => {
-                if let Err(e) = handle_client(stream) {
+                if let Err(e) = handle_client(stream, &mut store) {
                     error!("error handling client: {}", e);
                 }
             }
