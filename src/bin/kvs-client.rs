@@ -1,15 +1,11 @@
-use clap::builder::Str;
 use clap::Parser;
 use env_logger;
 use kvs::client;
 use kvs::common;
-use kvs::resp;
 use kvs::Result;
 use log::{error, info};
 use std::env;
-use std::io::Write;
 use std::net::TcpStream;
-use std::vec;
 
 #[derive(Parser, Debug, Clone)]
 #[command(author = "Shubh")]
@@ -34,28 +30,7 @@ fn main() -> Result<()> {
         Err(e) => error!("count not connect to server at: {}, err: {}", addr, e),
         Ok(mut stream) => {
             info!("connected to server at: {}", addr);
-            match &cli.cmd {
-                client::Command::Ping => {
-                    let ping = resp::RespValue::SimpleString("PING".into());
-                    let value = resp::to_string(&ping).unwrap();
-                    info!("command: {}", value);
-                    stream.write(value.as_bytes()).unwrap();
-                }
-                client::Command::Set { key, value } => {
-                    let buf = vec![
-                        resp::RespValue::BulkString(Some(b"set".into())),
-                        resp::RespValue::BulkString(Some(key.as_bytes().into())),
-                        resp::RespValue::BulkString(Some(value.as_bytes().into())),
-                    ];
-                    let cmd = resp::RespValue::Array(Some(buf));
-                    let value = resp::to_string(&cmd).unwrap();
-                    info!("command: {:?}, value: {}", cmd, value);
-                    stream.write_all(value.as_bytes()).unwrap();
-                }
-                _ => {
-                    info!("command: {:?}", cli.cmd);
-                }
-            }
+            client::handle_command(&cli.cmd, &mut stream).unwrap();
         }
     }
     Ok(())

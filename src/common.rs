@@ -1,5 +1,5 @@
 use crate::{KvsError, Result};
-use log::error;
+use log::{debug, error};
 use nom::branch::alt;
 use nom::bytes::complete::{tag, take, take_until};
 use nom::character::complete::char;
@@ -134,6 +134,10 @@ pub fn parse_command(data: &RespData) -> Option<KvsCommand> {
             [RespData::BulkString(key)] => Some(KvsCommand::Get(key.clone())),
             _ => None,
         },
+        "RM" => match args {
+            [RespData::BulkString(key)] => Some(KvsCommand::Rm(key.clone())),
+            _ => None,
+        },
         _ => {
             error!("cmd is invalid : {}", cmd);
             None
@@ -152,12 +156,12 @@ pub fn tcp_read_message(mut stream: &TcpStream) -> String {
     let size = stream
         .read(&mut buffer)
         .map_err(|e| {
-            error!("Error reading tcp stream: {}", e);
+            debug!("Error reading tcp stream: {}", e);
         })
         .unwrap();
     let res = std::str::from_utf8(&mut buffer[..size])
         .map_err(|e| {
-            error!("Error converting to string: {}", e);
+            debug!("Error converting to string: {}", e);
         })
         .unwrap()
         .to_string()
