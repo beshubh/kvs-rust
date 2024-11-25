@@ -22,43 +22,37 @@ pub fn handle_command(
     stream: &mut TcpStream,
     store: &mut KvStore,
 ) -> Result<()> {
-    match command {
-        KvsCommand::Ping => {
-            if let Err(e) = tcp_send_message(&stream, "+PONG\r\n".into()) {
-                error!("error sending message: {:?}", e);
-            }
-        }
+    let message: String = match command {
+        KvsCommand::Ping => "+OK\r\n".into(),
         KvsCommand::Set(key, value) => {
             store.set(key.into(), value.into())?;
-            if let Err(e) = tcp_send_message(&stream, "+OK\r\n".into()) {
-                error!("error sending message: {:?}", e);
-            }
+            "+OK\r\n".into()
         }
         KvsCommand::Get(key) => {
-            let mut message = String::from("-1\r\n");
+            let mut m = String::from("-1\r\n");
             if let Some(value) = store.get(key.into())? {
-                message = format!("${}\r\n{}\r\n", value.len(), value);
+                m = format!("${}\r\n{}\r\n", value.len(), value);
             }
-            if let Err(e) = tcp_send_message(&stream, message) {
-                error!("error sending message: {:?}", e);
-            }
+            m
         }
         KvsCommand::Rm(key) => {
-            let mut message = String::from("+OK\r\n");
+            let mut m = String::from("+OK\r\n");
             if let Err(e) = store.remove(key.into()) {
                 match e {
                     KvsError::KeyNotFound => {
-                        message = String::from("-Key not found\r\n");
+                        m = String::from("-Key not found\r\n");
                     }
                     e => {
                         debug!("Something went wrong on key remove: {:?}", e)
                     }
                 }
             }
-            if let Err(e) = tcp_send_message(&stream, message) {
-                error!("error sending tcp message: {:?}", e);
-            }
+            m
         }
+    };
+    debug!("message to send: {}", message);
+    if let Err(e) = tcp_send_message(&stream, message) {
+        error!("error sending message: {:?}", e);
     }
     Ok(())
 }

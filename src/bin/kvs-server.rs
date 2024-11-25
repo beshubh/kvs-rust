@@ -1,14 +1,13 @@
+use log::{error, info};
 use std::{
     env,
     io::{self, BufReader, Read},
     net::{TcpListener, TcpStream},
 };
 
-use log::{error, info};
-
 use clap::Parser;
+use kvs::KvStore;
 use kvs::{common, server, Result};
-use kvs::{resp, KvStore};
 
 #[derive(Parser, Debug, Clone)]
 #[command(author = "Shubh")]
@@ -36,6 +35,7 @@ fn handle_client(mut stream: TcpStream, store: &mut KvStore) -> io::Result<()> {
             }
             Ok(size) => {
                 let s = std::str::from_utf8(&buf[..size]).unwrap();
+                info!("message from client: {}", s);
                 let resp = common::parse_resp(s).unwrap().1;
                 let command = common::parse_command(&resp).unwrap();
                 server::handle_command(&command, &mut stream, store).unwrap();
