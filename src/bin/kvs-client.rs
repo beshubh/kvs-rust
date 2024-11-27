@@ -3,6 +3,7 @@ use env_logger;
 use env_logger::Builder;
 use kvs::client;
 use kvs::common;
+use kvs::common::RespData;
 use kvs::Result;
 use log::{error, info, LevelFilter};
 use std::env;
@@ -19,6 +20,20 @@ struct Cli {
 
     #[arg(long = "addr", global = true, default_value = "127.0.0.1:6969")]
     address: Option<String>,
+}
+
+fn handle_response(msg: &str) -> Result<()> {
+    let resp_data = common::parse_resp(msg).unwrap().1;
+    match resp_data {
+        RespData::BulkString(s) => {
+            info!("{}", s);
+        }
+        RespData::Error(e) => {
+            error!("{}", e);
+        }
+        _ => {}
+    };
+    Ok(())
 }
 
 fn main() -> Result<()> {
@@ -38,10 +53,9 @@ fn main() -> Result<()> {
     match stream {
         Err(e) => error!("count not connect to server at: {}, err: {}", addr, e),
         Ok(mut stream) => {
-            info!("connected to server at: {}", addr);
             client::handle_command(&cli.cmd, &mut stream).unwrap();
             let response = common::tcp_read_message(&mut stream);
-            info!("{}", response);
+            handle_response(&response).unwrap();
         }
     }
     Ok(())

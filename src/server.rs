@@ -3,7 +3,7 @@ use std::net::TcpStream;
 
 use crate::common::tcp_send_message;
 use crate::common::KvsCommand;
-use crate::KvStore;
+use crate::KvsEngine;
 use crate::KvsError;
 use crate::Result;
 use clap::Subcommand;
@@ -20,16 +20,16 @@ pub enum Command {
 pub fn handle_command(
     command: &KvsCommand,
     stream: &mut TcpStream,
-    store: &mut KvStore,
+    store: &mut dyn KvsEngine,
 ) -> Result<()> {
     let message: String = match command {
-        KvsCommand::Ping => "+OK\r\n".into(),
+        KvsCommand::Ping => "+PONG\r\n".into(),
         KvsCommand::Set(key, value) => {
             store.set(key.into(), value.into())?;
             "+OK\r\n".into()
         }
         KvsCommand::Get(key) => {
-            let mut m = String::from("-1\r\n");
+            let mut m = String::from("-Key not found\r\n");
             if let Some(value) = store.get(key.into())? {
                 m = format!("${}\r\n{}\r\n", value.len(), value);
             }
