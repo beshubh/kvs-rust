@@ -8,6 +8,8 @@ use std::{collections::HashMap, fs::OpenOptions, path::Path};
 use crate::client::Command;
 use crate::error::{KvsError, Result};
 
+use super::KvsEngine;
+
 struct CommandPos {
     walfile_num: u64,
     pos: u64,
@@ -52,62 +54,6 @@ impl KvStore {
             uncompacted_size,
         })
     }
-    /// Retrieves the value associated with the given key
-    pub fn get(&mut self, key: String) -> Result<Option<String>> {
-        if let Some(cmd_pos) = self.index.remove(&key) {
-            let reader = self
-                .readers
-                .get_mut(&cmd_pos.walfile_num)
-                .expect("unable to find reader in readers");
-            reader.seek(io::SeekFrom::Start(cmd_pos.pos))?;
-            let cmd_reader = reader.take(cmd_pos.len);
-            if let Command::Set { value, .. } = serde_json::from_reader(cmd_reader)? {
-                return Ok(Some(value));
-            } else {
-                Err(KvsError::InvalidCommand)
-            }
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// Sets a value for the given key
-    pub fn set(&mut self, key: String, value: String) -> Result<()> {
-        let cmd = Command::Set {
-            key: key.clone(),
-            value,
-        };
-        let pos = self.writer.pos;
-        serde_json::to_writer(&mut self.writer, &cmd)?;
-        self.writer.flush()?;
-        let new_pos = self.writer.pos;
-        let cmd_pos = CommandPos {
-            walfile_num: self.current_walfile_num,
-            pos,
-            len: new_pos - pos,
-        };
-        if let Some(old_cmd) = self.index.insert(key, cmd_pos) {
-            self.uncompacted_size += old_cmd.len;
-        }
-        if self.uncompacted_size >= MAX_WAL_SIZE_THRESHOLD {
-            self.run_compaction()?;
-        }
-        Ok(())
-    }
-
-    /// Removes a key and its associated value from the store
-    pub fn remove(&mut self, key: String) -> Result<()> {
-        if self.index.contains_key(&key) {
-            let cmd = Command::Rm { key: key.clone() };
-            serde_json::to_writer(&mut self.writer, &cmd)?;
-            if let Some(old_cmd) = self.index.remove(&key) {
-                // TODO: will this case every arrive? i don't think so, will see in future
-                self.uncompacted_size += old_cmd.len;
-            }
-            return Ok(());
-        }
-        Err(KvsError::KeyNotFound)
-    }
 
     fn run_compaction(&mut self) -> Result<()> {
         let compaction_walfile_num = self.current_walfile_num + 1;
@@ -141,6 +87,65 @@ impl KvStore {
         }
         self.uncompacted_size = 0;
         Ok(())
+    }
+}
+
+impl KvsEngine for KvStore {
+    /// Retrieves the value associated with the given key
+    fn get(&mut self, key: String) -> Result<Option<String>> {
+        if let Some(cmd_pos) = self.index.remove(&key) {
+            let reader = self
+                .readers
+                .get_mut(&cmd_pos.walfile_num)
+                .expect("unable to find reader in readers");
+            reader.seek(io::SeekFrom::Start(cmd_pos.pos))?;
+            let cmd_reader = reader.take(cmd_pos.len);
+            if let Command::Set { value, .. } = serde_json::from_reader(cmd_reader)? {
+                return Ok(Some(value));
+            } else {
+                Err(KvsError::InvalidCommand)
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Sets a value for the given key
+    fn set(&mut self, key: String, value: String) -> Result<()> {
+        let cmd = Command::Set {
+            key: key.clone(),
+            value,
+        };
+        let pos = self.writer.pos;
+        serde_json::to_writer(&mut self.writer, &cmd)?;
+        self.writer.flush()?;
+        let new_pos = self.writer.pos;
+        let cmd_pos = CommandPos {
+            walfile_num: self.current_walfile_num,
+            pos,
+            len: new_pos - pos,
+        };
+        if let Some(old_cmd) = self.index.insert(key, cmd_pos) {
+            self.uncompacted_size += old_cmd.len;
+        }
+        if self.uncompacted_size >= MAX_WAL_SIZE_THRESHOLD {
+            self.run_compaction()?;
+        }
+        Ok(())
+    }
+
+    /// Removes a key and its associated value from the store
+    fn remove(&mut self, key: String) -> Result<()> {
+        if self.index.contains_key(&key) {
+            let cmd = Command::Rm { key: key.clone() };
+            serde_json::to_writer(&mut self.writer, &cmd)?;
+            if let Some(old_cmd) = self.index.remove(&key) {
+                // TODO: will this case every arrive? i don't think so, will see in future
+                self.uncompacted_size += old_cmd.len;
+            }
+            return Ok(());
+        }
+        Err(KvsError::KeyNotFound)
     }
 }
 

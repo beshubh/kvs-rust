@@ -1,6 +1,7 @@
 use std::env;
 
 use clap::Parser;
+use kvs::KvsEngine;
 use kvs::{client, KvStore};
 
 #[derive(Parser, Debug, Clone)]

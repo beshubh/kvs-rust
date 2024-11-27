@@ -7,8 +7,8 @@ use std::{
 };
 
 use clap::Parser;
-use kvs::KvStore;
-use kvs::{common, server, Result};
+use kvs::{common, engines::SledStore, server, Result};
+use kvs::{KvStore, KvsEngine};
 
 #[derive(Parser, Debug, Clone)]
 #[command(author = "Shubh")]
@@ -25,7 +25,7 @@ struct Cli {
     engine: Option<String>,
 }
 
-fn handle_client(mut stream: TcpStream, store: &mut KvStore) -> io::Result<()> {
+fn handle_client(mut stream: TcpStream, store: &mut dyn KvsEngine) -> io::Result<()> {
     let mut reader = BufReader::new(stream.try_clone()?);
     loop {
         let mut buf: Vec<u8> = vec![0; 1024];
@@ -78,13 +78,21 @@ fn main() -> Result<()> {
         error!("could not bind to address: {}, error: {}", addr, e);
         return Err(kvs::KvsError::Message(" could not bind to address".into()));
     }
-    let mut store = KvStore::open(&env::current_dir().unwrap()).unwrap();
+    let mut store: Box<dyn KvsEngine> = match engine.as_str() {
+        "kvs" => Box::new(KvStore::open(&env::current_dir().unwrap())?),
+        "sled" => Box::new(SledStore::open(&env::current_dir().unwrap())?),
+        _ => {
+            log::error!("unsupported engine: {}", engine);
+            return Err(kvs::KvsError::Message("unsupported engine".into()));
+        }
+    };
+
     let listener = listener.unwrap();
     for stream in listener.incoming() {
         match stream {
             Err(e) => error!("could not bind to address: {}, err:{}", addr, e),
             Ok(stream) => {
-                if let Err(e) = handle_client(stream, &mut store) {
+                if let Err(e) = handle_client(stream, &mut *store) {
                     error!("error handling client: {}", e);
                 }
             }

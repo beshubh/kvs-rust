@@ -2,17 +2,13 @@ use serde::{ser, Serialize};
 
 use crate::resp::error::{RespError, Result};
 
-pub struct Serializer {
-    output: String,
-}
+pub struct Serializer {}
 
 pub fn to_string<T>(value: &T) -> Result<String>
 where
     T: Serialize,
 {
-    let mut serializer = Serializer {
-        output: String::new(),
-    };
+    let mut serializer = Serializer {};
     let output = value.serialize(&mut serializer)?;
     Ok(output)
 }
@@ -222,9 +218,7 @@ impl ser::SerializeSeq for SeqSerializer {
     where
         T: ?Sized + Serialize,
     {
-        let mut ser = Serializer {
-            output: String::new(),
-        };
+        let mut ser = Serializer {};
         let element = value.serialize(&mut ser)?;
         self.elements.push(element);
         Ok(())

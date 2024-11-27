@@ -5,7 +5,6 @@ use crate::resp;
 use crate::KvsError;
 use crate::Result;
 use clap::Subcommand;
-use log::debug;
 use serde::{Deserialize, Serialize};
 
 #[derive(Subcommand, Deserialize, Serialize, Debug, Clone, PartialEq)]
@@ -59,7 +58,6 @@ pub fn handle_command(cmd: &Command, stream: &mut TcpStream) -> Result<()> {
         Command::Version => resp::RespValue::SimpleString("version".into()),
     };
     let message = resp::to_string(&resp_value).unwrap();
-    debug!("Message to send: {}", message);
     tcp_send_message(stream, message)?;
     Ok(())
 }
