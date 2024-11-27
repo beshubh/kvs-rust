@@ -1,15 +1,15 @@
+use std::env;
 use std::net::TcpStream;
-
-use clap::Subcommand;
-use log::debug;
-use serde::{Deserialize, Serialize};
 
 use crate::common::tcp_send_message;
 use crate::common::KvsCommand;
 use crate::KvStore;
 use crate::KvsError;
 use crate::Result;
+use clap::Subcommand;
+use log::debug;
 use log::error;
+use serde::{Deserialize, Serialize};
 
 #[derive(Subcommand, Deserialize, Serialize, Debug, Clone)]
 pub enum Command {
@@ -49,6 +49,7 @@ pub fn handle_command(
             }
             m
         }
+        KvsCommand::Version => env!("CARGO_PKG_VERSION").into(),
     };
     debug!("message to send: {}", message);
     if let Err(e) = tcp_send_message(&stream, message) {
