@@ -28,6 +28,7 @@ pub enum KvsCommand {
     Set(String, String),
     Get(String),
     Rm(String),
+    Version,
 }
 
 pub struct RespMessage {
@@ -106,19 +107,21 @@ pub fn parse_resp(input: &str) -> IResult<&str, RespData> {
 }
 
 pub fn parse_command(data: &RespData) -> Option<KvsCommand> {
-    let array = match data {
-        RespData::Array(arr) => arr,
-        _ => {
-            error!("resp does not starts with array");
-            return None;
+    let mut cmd = data;
+    let mut args: &[RespData] = &[];
+    match data {
+        RespData::Array(arr) => {
+            (cmd, args) = arr.split_first().unwrap();
         }
-    };
-    let (cmd, args) = array.split_first().unwrap();
+        _ => {}
+    }
 
     let cmd = match cmd {
         RespData::BulkString(s) => s,
+        RespData::SimpleString(s) => s,
         _ => return None,
     };
+
     match cmd.to_uppercase().as_str() {
         "PING" => match args {
             [] => Some(KvsCommand::Ping),
@@ -136,6 +139,10 @@ pub fn parse_command(data: &RespData) -> Option<KvsCommand> {
         },
         "RM" => match args {
             [RespData::BulkString(key)] => Some(KvsCommand::Rm(key.clone())),
+            _ => None,
+        },
+        "VERSION" => match args {
+            [] => Some(KvsCommand::Version),
             _ => None,
         },
         _ => {

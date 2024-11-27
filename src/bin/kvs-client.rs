@@ -1,9 +1,10 @@
 use clap::Parser;
 use env_logger;
+use env_logger::Builder;
 use kvs::client;
 use kvs::common;
 use kvs::Result;
-use log::{error, info};
+use log::{error, info, LevelFilter};
 use std::env;
 use std::net::TcpStream;
 
@@ -22,8 +23,16 @@ struct Cli {
 
 fn main() -> Result<()> {
     dotenv::dotenv().ok();
-    env_logger::init();
+    Builder::new()
+        .filter(None, LevelFilter::Info)
+        .write_style(env_logger::WriteStyle::Always)
+        .target(env_logger::Target::Stdout)
+        .init();
     let cli = Cli::parse();
+    if cli.cmd == client::Command::Version {
+        info!("{}", env!("CARGO_PKG_VERSION"))
+    }
+
     let addr = common::parse_address(cli.address.unwrap())?;
     let stream = TcpStream::connect(&addr);
     match stream {
@@ -31,6 +40,8 @@ fn main() -> Result<()> {
         Ok(mut stream) => {
             info!("connected to server at: {}", addr);
             client::handle_command(&cli.cmd, &mut stream).unwrap();
+            let response = common::tcp_read_message(&mut stream);
+            info!("{}", response);
         }
     }
     Ok(())
