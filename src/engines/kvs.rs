@@ -1,12 +1,14 @@
+use crate::client::Command;
+use crate::error::{KvsError, Result};
 use serde_json::Deserializer;
 use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{self, prelude::*, BufReader, BufWriter};
 use std::path::PathBuf;
+use std::sync::atomic;
+use std::sync::atomic::AtomicU64;
+use std::sync::{Arc, Mutex};
 use std::{collections::HashMap, fs::OpenOptions, path::Path};
-
-use crate::client::Command;
-use crate::error::{KvsError, Result};
 
 use super::KvsEngine;
 
@@ -19,13 +21,22 @@ struct CommandPos {
 const MAX_WAL_SIZE_THRESHOLD: u64 = 1024 * 1024;
 
 /// A key-value store for storing string pairs
-pub struct KvStore {
+///
+pub struct KvStore(Arc<SharedKvStore>);
+
+impl Clone for KvStore {
+    fn clone(&self) -> Self {
+        Self(Arc::clone(&self.0))
+    }
+}
+
+pub struct SharedKvStore {
     path: PathBuf,
-    index: BTreeMap<String, CommandPos>,
-    readers: HashMap<u64, BufReaderWithPos<File>>,
-    writer: BufWriterWithPos<File>,
-    current_walfile_num: u64,
-    uncompacted_size: u64,
+    index: Mutex<BTreeMap<String, CommandPos>>,
+    readers: Mutex<HashMap<u64, BufReaderWithPos<File>>>,
+    writer: Mutex<BufWriterWithPos<File>>,
+    current_walfile_num: AtomicU64,
+    uncompacted_size: AtomicU64,
 }
 
 impl KvStore {
@@ -45,28 +56,41 @@ impl KvStore {
             current_walfile_num,
             BufReaderWithPos::new(File::open(log_path(path, current_walfile_num))?)?,
         );
-        Ok(Self {
+        Ok(Self(Arc::new(SharedKvStore {
             path: path.into(),
-            index,
-            readers,
-            writer,
-            current_walfile_num,
-            uncompacted_size,
-        })
+            index: Mutex::new(index),
+            readers: Mutex::new(readers),
+            writer: Mutex::new(writer),
+            current_walfile_num: current_walfile_num.into(),
+            uncompacted_size: uncompacted_size.into(),
+        })))
     }
 
-    fn run_compaction(&mut self) -> Result<()> {
-        let compaction_walfile_num = self.current_walfile_num + 1;
-        self.current_walfile_num += 1; // for new active wal
-        self.writer = new_log_file(&self.path, self.current_walfile_num)?;
-        let mut compaction_writer = new_log_file(&self.path, compaction_walfile_num)?;
+    fn run_compaction(&self) -> Result<()> {
+        let compaction_walfile_num = self
+            .0
+            .current_walfile_num
+            .fetch_add(1, atomic::Ordering::SeqCst) // increment for new active wal
+            + 1;
+
+        *self.0.writer.lock().unwrap() = new_log_file(
+            &self.0.path,
+            self.0.current_walfile_num.load(atomic::Ordering::SeqCst),
+        )?;
+
+        let mut compaction_writer = new_log_file(&self.0.path, compaction_walfile_num)?;
         let pos: u64 = 0;
-        for cmd_pos in self.index.values_mut() {
-            let reader = self
-                .readers
+        // DEADLOCK probably
+        let mut index = self.0.index.lock().unwrap();
+        for cmd_pos in index.values_mut() {
+            let mut readers = self.0.readers.lock().unwrap();
+
+            let reader = readers
                 .get_mut(&cmd_pos.walfile_num)
                 .expect("reader not found for a command in readers");
+
             reader.seek(io::SeekFrom::Start(cmd_pos.pos))?;
+
             let mut cmd_reader = reader.take(cmd_pos.len);
             let len = io::copy(&mut cmd_reader, &mut compaction_writer)?;
             *cmd_pos = CommandPos {
@@ -77,25 +101,28 @@ impl KvStore {
         }
         compaction_writer.flush()?;
         let stale_files: Vec<_> = self
+            .0
             .readers
+            .lock()
+            .unwrap()
             .keys()
-            .filter(|x| **x < self.current_walfile_num)
+            .filter(|x| **x < self.0.current_walfile_num.load(atomic::Ordering::SeqCst))
             .cloned()
             .collect();
         for stale_walfile_num in &stale_files {
-            fs::remove_file(log_path(&self.path, *stale_walfile_num))?;
+            fs::remove_file(log_path(&self.0.path, *stale_walfile_num))?;
         }
-        self.uncompacted_size = 0;
+        self.0.uncompacted_size.store(0, atomic::Ordering::SeqCst);
         Ok(())
     }
 }
 
 impl KvsEngine for KvStore {
     /// Retrieves the value associated with the given key
-    fn get(&mut self, key: String) -> Result<Option<String>> {
-        if let Some(cmd_pos) = self.index.remove(&key) {
-            let reader = self
-                .readers
+    fn get(&self, key: String) -> Result<Option<String>> {
+        if let Some(cmd_pos) = self.0.index.lock().unwrap().get(&key) {
+            let mut readers = self.0.readers.lock().unwrap();
+            let reader = readers
                 .get_mut(&cmd_pos.walfile_num)
                 .expect("unable to find reader in readers");
             reader.seek(io::SeekFrom::Start(cmd_pos.pos))?;
@@ -111,37 +138,45 @@ impl KvsEngine for KvStore {
     }
 
     /// Sets a value for the given key
-    fn set(&mut self, key: String, value: String) -> Result<()> {
+    fn set(&self, key: String, value: String) -> Result<()> {
         let cmd = Command::Set {
             key: key.clone(),
             value,
         };
-        let pos = self.writer.pos;
-        serde_json::to_writer(&mut self.writer, &cmd)?;
-        self.writer.flush()?;
-        let new_pos = self.writer.pos;
+
+        let mut writer = self.0.writer.lock().unwrap();
+        let pos = writer.pos;
+        serde_json::to_writer(&mut *writer, &cmd)?;
+        writer.flush()?;
+
+        let new_pos = writer.pos;
         let cmd_pos = CommandPos {
-            walfile_num: self.current_walfile_num,
+            walfile_num: self.0.current_walfile_num.load(atomic::Ordering::SeqCst),
             pos,
             len: new_pos - pos,
         };
-        if let Some(old_cmd) = self.index.insert(key, cmd_pos) {
-            self.uncompacted_size += old_cmd.len;
+        if let Some(old_cmd) = self.0.index.lock().unwrap().insert(key, cmd_pos) {
+            self.0
+                .uncompacted_size
+                .fetch_add(old_cmd.len, atomic::Ordering::SeqCst);
         }
-        if self.uncompacted_size >= MAX_WAL_SIZE_THRESHOLD {
+        if self.0.uncompacted_size.load(atomic::Ordering::SeqCst) >= MAX_WAL_SIZE_THRESHOLD {
             self.run_compaction()?;
         }
         Ok(())
     }
 
     /// Removes a key and its associated value from the store
-    fn remove(&mut self, key: String) -> Result<()> {
-        if self.index.contains_key(&key) {
+    fn remove(&self, key: String) -> Result<()> {
+        let mut index = self.0.index.lock().unwrap();
+        if index.contains_key(&key) {
             let cmd = Command::Rm { key: key.clone() };
-            serde_json::to_writer(&mut self.writer, &cmd)?;
-            if let Some(old_cmd) = self.index.remove(&key) {
+            serde_json::to_writer(&mut *self.0.writer.lock().unwrap(), &cmd)?;
+            if let Some(old_cmd) = index.remove(&key) {
                 // TODO: will this case every arrive? i don't think so, will see in future
-                self.uncompacted_size += old_cmd.len;
+                self.0
+                    .uncompacted_size
+                    .fetch_add(old_cmd.len, atomic::Ordering::SeqCst);
             }
             return Ok(());
         }

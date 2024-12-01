@@ -58,6 +58,6 @@ pub fn handle_command(cmd: &Command, stream: &mut TcpStream) -> Result<()> {
         Command::Version => resp::RespValue::SimpleString("version".into()),
     };
     let message = resp::to_string(&resp_value).unwrap();
-    tcp_send_message(stream, message)?;
+    tcp_send_message(stream, &message)?;
     Ok(())
 }

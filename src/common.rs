@@ -152,7 +152,7 @@ pub fn parse_command(data: &RespData) -> Option<KvsCommand> {
     }
 }
 
-pub fn tcp_send_message(mut stream: &TcpStream, message: String) -> Result<()> {
+pub fn tcp_send_message(mut stream: &TcpStream, message: &str) -> Result<()> {
     stream.write(message.as_bytes())?;
     stream.flush()?;
     Ok(())
