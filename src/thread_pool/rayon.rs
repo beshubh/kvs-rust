@@ -1,3 +1,4 @@
+use crate::error::Result;
 use crate::thread_pool::ThreadPool;
 
 pub struct RayonThreadPool {
@@ -5,7 +6,7 @@ pub struct RayonThreadPool {
 }
 
 impl ThreadPool for RayonThreadPool {
-    fn new(threads: u32) -> super::Result<Self>
+    fn new(threads: u32) -> Result<Self>
     where
         Self: Sized,
     {

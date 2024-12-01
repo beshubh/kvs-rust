@@ -46,7 +46,6 @@ impl ThreadPool for SharedQueueThreadPool {
         F: FnOnce() + Send + 'static,
     {
         let job = Box::new(job);
-        println!("I am here, spawned.");
         self.work_channel
             .send(ThreadPoolMessage::RunJob(job))
             .unwrap();
