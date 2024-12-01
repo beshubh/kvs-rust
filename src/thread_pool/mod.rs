@@ -8,8 +8,6 @@ pub trait ThreadPool {
     fn spawn<F>(&self, job: F)
     where
         F: FnOnce() + Send + 'static;
-
-    fn shutdown(&self);
 }
 
 pub type Job = Box<dyn FnOnce() + Send + 'static>;
