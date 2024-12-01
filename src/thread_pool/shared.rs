@@ -1,26 +1,23 @@
 use crate::Result;
-use std::sync::Arc;
-use std::sync::Mutex;
+use crossbeam;
 
 use crate::thread_pool::{ThreadPool, ThreadPoolMessage};
 
 pub struct SharedQueueThreadPool {
-    work_channel: std::sync::mpsc::Sender<ThreadPoolMessage>,
+    work_channel: crossbeam::channel::Sender<ThreadPoolMessage>,
     _workers: Vec<std::thread::JoinHandle<()>>,
 }
 
 impl ThreadPool for SharedQueueThreadPool {
     fn new(max_workers: u32) -> Result<Self> {
         let mut threads = vec![];
-        let (tx, rx) = std::sync::mpsc::channel::<ThreadPoolMessage>();
-        let rx = Arc::new(Mutex::new(rx));
+        let (tx, rx) = crossbeam::channel::unbounded::<ThreadPoolMessage>();
 
         for _ in 0..max_workers {
             let rx = rx.clone();
             let thread = std::thread::spawn(move || loop {
                 let job = {
-                    let receiver = rx.lock().unwrap();
-                    match receiver.recv() {
+                    match rx.recv() {
                         Ok(job) => job,
                         Err(_) => break,
                     }
