@@ -612,13 +612,16 @@ dependencies = [
  "buffered_offset_reader",
  "clap 4.5.20",
  "criterion",
+ "crossbeam-utils",
  "dotenv",
  "env_logger",
  "failure",
  "log",
  "nom",
+ "panic-control",
  "predicates",
  "rand 0.6.5",
+ "rayon",
  "serde",
  "serde_json",
  "tempfile",
@@ -721,6 +724,12 @@ name = "oorandom"
 version = "11.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b410bbe7e14ab526a0e86877eb47c6996a2bd7746f027ba551028c925390e4e9"
+
+[[package]]
+name = "panic-control"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "159973aebc43b4640619042b3bf160e3b6348000a949e37c0806ae6acc79d6c7"
 
 [[package]]
 name = "plotters"

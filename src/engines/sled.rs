@@ -1,6 +1,11 @@
-use std::path::Path;
+use std::{
+    path::Path,
+    sync::{Arc, Mutex},
+};
 
-pub struct SledStore;
+pub struct SledStore(Arc<Mutex<SharedSledStore>>);
+
+pub struct SharedSledStore {}
 
 impl SledStore {
     pub fn open(_path: &Path) -> super::Result<Self> {
@@ -9,15 +14,21 @@ impl SledStore {
 }
 
 impl super::KvsEngine for SledStore {
-    fn set(&mut self, _key: String, _value: String) -> super::Result<()> {
+    fn set(&self, _key: String, _value: String) -> super::Result<()> {
         unimplemented!()
     }
 
-    fn get(&mut self, _key: String) -> super::Result<Option<String>> {
+    fn get(&self, _key: String) -> super::Result<Option<String>> {
         unimplemented!()
     }
 
-    fn remove(&mut self, _key: String) -> super::Result<()> {
+    fn remove(&self, _key: String) -> super::Result<()> {
+        unimplemented!()
+    }
+}
+
+impl Clone for SledStore {
+    fn clone(&self) -> Self {
         unimplemented!()
     }
 }
