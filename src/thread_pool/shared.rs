@@ -1,11 +1,12 @@
-use crate::Result;
 use crossbeam;
+use std::panic::AssertUnwindSafe;
 
 use crate::thread_pool::{ThreadPool, ThreadPoolMessage};
+use crate::Result;
 
 pub struct SharedQueueThreadPool {
     work_channel: crossbeam::channel::Sender<ThreadPoolMessage>,
-    _workers: Vec<std::thread::JoinHandle<()>>,
+    workers: Vec<std::thread::JoinHandle<()>>,
 }
 
 impl ThreadPool for SharedQueueThreadPool {
@@ -22,10 +23,13 @@ impl ThreadPool for SharedQueueThreadPool {
                         Err(_) => break,
                     }
                 };
-                // FIXME: what if the job panics?
                 match job {
-                    ThreadPoolMessage::RunJob(job) => job(),
-                    // FIXME: should we just break? I think something else should be done or I don't know will have to research.
+                    ThreadPoolMessage::RunJob(job) => {
+                        let res = std::panic::catch_unwind(AssertUnwindSafe(job));
+                        if let Err(e) = res {
+                            eprintln!("Thread panicked: {:?}", e);
+                        }
+                    }
                     ThreadPoolMessage::Shutdown => break,
                 }
             });
@@ -33,7 +37,7 @@ impl ThreadPool for SharedQueueThreadPool {
         }
         Ok(SharedQueueThreadPool {
             work_channel: tx,
-            _workers: threads,
+            workers: threads,
         })
     }
 
@@ -47,10 +51,16 @@ impl ThreadPool for SharedQueueThreadPool {
             .send(ThreadPoolMessage::RunJob(job))
             .unwrap();
     }
+}
 
-    fn shutdown(&self) {
-        for _ in &self._workers {
+impl Drop for SharedQueueThreadPool {
+    fn drop(&mut self) {
+        for _ in &self.workers {
             self.work_channel.send(ThreadPoolMessage::Shutdown).unwrap();
+        }
+
+        for worker in self.workers.drain(..) {
+            worker.join().unwrap();
         }
     }
 }

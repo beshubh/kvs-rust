@@ -15,6 +15,4 @@ impl ThreadPool for NaiveThreadPool {
     {
         thread::spawn(|| job());
     }
-
-    fn shutdown(&self) {}
 }

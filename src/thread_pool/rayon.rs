@@ -23,6 +23,4 @@ impl ThreadPool for RayonThreadPool {
     {
         self.pool.spawn(job);
     }
-
-    fn shutdown(&self) {}
 }
