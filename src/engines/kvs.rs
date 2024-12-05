@@ -353,10 +353,8 @@ impl KvStoreWriter {
     }
 
     fn run_compaction(&mut self) {
-        // there can also be the case where compaction is ran multiple times
-
-        // between these lines there can happen a case where index get's modified because of a new entry.
-        // so at line 82, now index will have something that the readers are not aware of.
+        // FIXME: there is a bug in compaction, it opens too many files, and also
+        // and error "No such file or directory" is raised from here
         let active_wal = self.active_wal;
         let compaction_walfile_num = active_wal + 1;
         self.active_wal = active_wal + 2;
