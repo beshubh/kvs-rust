@@ -22,9 +22,6 @@ struct CommandPos {
 const MAX_WAL_SIZE_THRESHOLD: u64 = 1024 * 1024;
 
 /// A key-value store for storing string pairs
-///
-///
-
 #[derive(Clone)]
 pub struct KvStore {
     index: Arc<DashMap<String, CommandPos>>,
@@ -64,7 +61,9 @@ impl KvStore {
             while running_clone.load(atomic::Ordering::Relaxed) {
                 if let Ok(mut writer_guard) = writer_clone.lock() {
                     if writer_guard.uncompacted > MAX_WAL_SIZE_THRESHOLD {
-                        writer_guard.run_compaction();
+                        if let Err(e) = writer_guard.run_compaction() {
+                            println!("Error compacting: {:?}", e);
+                        }
                     }
                 }
                 thread::sleep(Duration::from_secs(2));
@@ -303,7 +302,7 @@ impl KvStoreReader {
         Ok(())
     }
 
-    fn close_stale_handles(&self, compaction_walfile_num: u64) {
+    fn close_stale_handles(&self, compaction_walfile_num: u64) -> Result<()> {
         let keys: Vec<u64> = self.readers.iter().map(|pair| *pair.key()).collect();
         let stale_files: Vec<_> = keys
             .iter()
@@ -312,18 +311,10 @@ impl KvStoreReader {
             .collect();
         for stale_walfile_num in &stale_files {
             let path = log_path(&self.path, *stale_walfile_num);
-            println!("Attempting to remove file: {:?}", path);
-            if let Err(e) = fs::remove_file(&path) {
-                println!(
-                    "error remvoing file, gen: {} err: {:?}",
-                    stale_walfile_num, e
-                );
-                println!("error removing...");
-            } else {
-                self.readers.remove(&stale_walfile_num);
-                println!("remove success..");
-            }
+            fs::remove_file(&path)?;
+            self.readers.remove(&stale_walfile_num);
         }
+        Ok(())
     }
 }
 
@@ -386,15 +377,15 @@ impl KvStoreWriter {
         }
     }
 
-    fn run_compaction(&mut self) {
+    fn run_compaction(&mut self) -> Result<()> {
         let active_wal = self.active_wal;
         let compaction_walfile_num = active_wal + 1;
         self.active_wal = active_wal + 2;
-        let mut compaction_writer = new_log_file(&self.path, compaction_walfile_num).unwrap();
+        let mut compaction_writer = new_log_file(&self.path, compaction_walfile_num)?;
 
         // new active wal file
-        self.writer = new_log_file(&self.path, self.active_wal).unwrap();
-        self.reader.add_reader(self.active_wal).unwrap();
+        self.writer = new_log_file(&self.path, self.active_wal)?;
+        self.reader.add_reader(self.active_wal)?;
 
         let mut pos: u64 = 0;
 
@@ -413,7 +404,7 @@ impl KvStoreWriter {
                 .expect("unable to seek reader");
 
             let mut cmd_reader = reader.by_ref().take(cmd_pos.len);
-            let len = io::copy(&mut cmd_reader, &mut compaction_writer).expect("unable to copy");
+            let len = io::copy(&mut cmd_reader, &mut compaction_writer)?;
             *cmd_pos.value_mut() = CommandPos {
                 walfile_num: compaction_walfile_num,
                 pos,
@@ -423,8 +414,10 @@ impl KvStoreWriter {
         }
 
         compaction_writer.flush().unwrap();
-        self.reader.add_reader(compaction_walfile_num).unwrap();
-        self.reader.close_stale_handles(compaction_walfile_num);
+        self.reader.add_reader(compaction_walfile_num)?;
+        self.reader.close_stale_handles(compaction_walfile_num)?;
         self.uncompacted = 0;
+
+        Ok(())
     }
 }
