@@ -86,7 +86,7 @@ fn remove_key() -> Result<()> {
 #[test]
 fn compaction() -> Result<()> {
     let temp_dir = TempDir::new().expect("unable to create temporary working directory");
-    let store = KvStore::open(temp_dir.path())?;
+    let store = KvStore::open(temp_dir.path()).unwrap();
 
     let dir_size = || {
         let entries = WalkDir::new(temp_dir.path()).into_iter();
@@ -106,13 +106,13 @@ fn compaction() -> Result<()> {
             let value = format!("{}", iter);
             store.set(key, value)?;
         }
-
         let new_size = dir_size();
         if new_size > current_size {
             current_size = new_size;
             continue;
         }
         // Compaction triggered
+        println!("COMPACTION TRIGGERED...");
 
         drop(store);
         // reopen and check content

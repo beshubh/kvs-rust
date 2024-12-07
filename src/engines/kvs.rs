@@ -6,7 +6,10 @@ use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{self, prelude::*, BufReader, BufWriter};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::AtomicBool;
+use std::sync::{atomic, Arc, Mutex};
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
 use std::{fs::OpenOptions, path::Path};
 
 use super::KvsEngine;
@@ -21,6 +24,7 @@ const MAX_WAL_SIZE_THRESHOLD: u64 = 1024 * 1024;
 
 /// A key-value store for storing string pairs
 ///
+///
 
 #[derive(Clone)]
 pub struct KvStore {
@@ -28,6 +32,8 @@ pub struct KvStore {
     index: Arc<Mutex<BTreeMap<String, CommandPos>>>,
     reader: Arc<KvStoreReader>,
     writer: Arc<Mutex<KvStoreWriter>>,
+    running: Arc<AtomicBool>,
+    compaction_thread: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
 
 impl KvStore {
@@ -35,6 +41,7 @@ impl KvStore {
         let mut index = BTreeMap::new();
 
         let walfile_nums = sorted_walfile_nums(path)?;
+        println!("walfile nums: {:?}", walfile_nums);
         let reader = Arc::new(KvStoreReader::from_walfiles(
             path,
             walfile_nums.clone(),
@@ -49,14 +56,45 @@ impl KvStore {
             Arc::clone(&reader),
             index.clone(),
         )?;
+        let writer = Arc::new(Mutex::new(writer));
         reader.add_reader(current_walfile_num)?;
+
+        let running = Arc::new(AtomicBool::new(true));
+        let running_clone = running.clone();
+        let writer_clone = writer.clone();
+
+        let compaction_thread = thread::spawn(move || {
+            while running_clone.load(atomic::Ordering::Relaxed) {
+                if let Ok(mut writer_guard) = writer_clone.lock() {
+                    if writer_guard.uncompacted > MAX_WAL_SIZE_THRESHOLD {
+                        writer_guard.run_compaction();
+                    }
+                }
+                thread::sleep(Duration::from_secs(2));
+            }
+        });
 
         Ok(Self {
             path: Arc::new(path.into()),
             index,
             reader,
-            writer: Arc::new(Mutex::new(writer)),
+            writer,
+            running,
+            compaction_thread: Arc::new(Mutex::new(Some(compaction_thread))),
         })
+    }
+}
+
+impl Drop for KvStore {
+    fn drop(&mut self) {
+        if Arc::strong_count(&self.compaction_thread) == 1 {
+            self.running.store(false, atomic::Ordering::Relaxed);
+            if let Ok(mut guard) = self.compaction_thread.lock() {
+                if let Some(handle) = guard.take() {
+                    handle.join().unwrap();
+                }
+            }
+        }
     }
 }
 
@@ -74,12 +112,6 @@ impl KvsEngine for KvStore {
         let writer = Arc::clone(&self.writer);
         let mut writer = writer.lock().unwrap();
         writer.set(key, value)?;
-        if writer.uncompacted > MAX_WAL_SIZE_THRESHOLD {
-            let wc = Arc::clone(&self.writer);
-            std::thread::spawn(move || {
-                wc.lock().unwrap().run_compaction();
-            });
-        }
         Ok(())
     }
 
@@ -252,7 +284,8 @@ impl KvStoreReader {
     ) -> Result<Self> {
         let readers = DashMap::new();
         for walfile_num in walfile_nums {
-            let mut reader = BufReaderWithPos::new(File::open(log_path(path, walfile_num))?)?;
+            let mut reader =
+                BufReaderWithPos::new(File::open(log_path(path, walfile_num)).unwrap())?;
             load(walfile_num, &mut reader, index)?;
             readers.insert(walfile_num, reader);
         }
@@ -270,7 +303,7 @@ impl KvStoreReader {
         }
         self.readers.insert(
             walfile_num,
-            BufReaderWithPos::new(File::open(log_path(&self.path, walfile_num))?)?,
+            BufReaderWithPos::new(File::open(log_path(&self.path, walfile_num)).unwrap()).unwrap(),
         );
         Ok(())
     }
@@ -283,8 +316,17 @@ impl KvStoreReader {
             .cloned()
             .collect();
         for stale_walfile_num in &stale_files {
-            if let Err(e) = fs::remove_file(log_path(&self.path, *stale_walfile_num)) {
-                println!("error remvoing file: {:?}", e);
+            let path = log_path(&self.path, *stale_walfile_num);
+            println!("Attempting to remove file: {:?}", path);
+            if let Err(e) = fs::remove_file(&path) {
+                println!(
+                    "error remvoing file, gen: {} err: {:?}",
+                    stale_walfile_num, e
+                );
+                println!("error removing...");
+            } else {
+                self.readers.remove(&stale_walfile_num);
+                println!("remove success..");
             }
         }
     }
@@ -353,8 +395,6 @@ impl KvStoreWriter {
     }
 
     fn run_compaction(&mut self) {
-        // FIXME: there is a bug in compaction, it opens too many files, and also
-        // and error "No such file or directory" is raised from here
         let active_wal = self.active_wal;
         let compaction_walfile_num = active_wal + 1;
         self.active_wal = active_wal + 2;
@@ -363,8 +403,6 @@ impl KvStoreWriter {
         // new active wal file
         self.writer = new_log_file(&self.path, self.active_wal).unwrap();
         self.reader.add_reader(self.active_wal).unwrap();
-
-        println!("compaction walfilenum: {}", compaction_walfile_num);
 
         let mut pos: u64 = 0;
         let mut index = self.index.lock().unwrap();
@@ -376,7 +414,6 @@ impl KvStoreWriter {
             // println!("compacting walfile num: {}", cmd_pos.walfile_num);
             let reader = self.reader.readers.get_mut(&cmd_pos.walfile_num);
             if reader.is_none() {
-                println!("READER NOT FOUND WHILE COMPACTING");
                 panic!("reader not found for the command that was in the index?");
             }
             let mut reader = reader.unwrap();
@@ -386,7 +423,6 @@ impl KvStoreWriter {
 
             let mut cmd_reader = reader.by_ref().take(cmd_pos.len);
             let len = io::copy(&mut cmd_reader, &mut compaction_writer).expect("unable to copy");
-            println!("len: {}, pos: {}", len, pos);
             *cmd_pos = CommandPos {
                 walfile_num: compaction_walfile_num,
                 pos,
