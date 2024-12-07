@@ -2,7 +2,6 @@ use crate::client::Command;
 use crate::error::{KvsError, Result};
 use dashmap::DashMap;
 use serde_json::Deserializer;
-use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{self, prelude::*, BufReader, BufWriter};
 use std::path::PathBuf;
@@ -28,8 +27,7 @@ const MAX_WAL_SIZE_THRESHOLD: u64 = 1024 * 1024;
 
 #[derive(Clone)]
 pub struct KvStore {
-    path: Arc<PathBuf>,
-    index: Arc<Mutex<BTreeMap<String, CommandPos>>>,
+    index: Arc<DashMap<String, CommandPos>>,
     reader: Arc<KvStoreReader>,
     writer: Arc<Mutex<KvStoreWriter>>,
     running: Arc<AtomicBool>,
@@ -38,17 +36,16 @@ pub struct KvStore {
 
 impl KvStore {
     pub fn open(path: &Path) -> Result<Self> {
-        let mut index = BTreeMap::new();
+        let mut index = DashMap::new();
 
         let walfile_nums = sorted_walfile_nums(path)?;
-        println!("walfile nums: {:?}", walfile_nums);
         let reader = Arc::new(KvStoreReader::from_walfiles(
             path,
             walfile_nums.clone(),
             &mut index,
         )?);
         let current_walfile_num = walfile_nums.last().unwrap_or(&0) + 1;
-        let index = Arc::new(Mutex::new(index));
+        let index = Arc::new(index);
 
         let writer = KvStoreWriter::new(
             path,
@@ -75,7 +72,6 @@ impl KvStore {
         });
 
         Ok(Self {
-            path: Arc::new(path.into()),
             index,
             reader,
             writer,
@@ -101,16 +97,15 @@ impl Drop for KvStore {
 impl KvsEngine for KvStore {
     /// Retrieves the value associated with the given key
     fn get(&self, key: String) -> Result<Option<String>> {
-        if let Some(cmd_pos) = self.index.lock().unwrap().get(&key) {
-            return Ok(self.reader.get(cmd_pos)?);
+        if let Some(val) = self.index.get(&key) {
+            return Ok(self.reader.get(&*val)?);
         }
         Ok(None)
     }
 
     /// Sets a value for the given key
     fn set(&self, key: String, value: String) -> Result<()> {
-        let writer = Arc::clone(&self.writer);
-        let mut writer = writer.lock().unwrap();
+        let mut writer = self.writer.lock().unwrap();
         writer.set(key, value)?;
         Ok(())
     }
@@ -135,7 +130,7 @@ fn new_log_file(dir: &Path, walfile_num: u64) -> Result<BufWriterWithPos<File>> 
 fn load(
     walfile_num: u64,
     reader: &mut BufReaderWithPos<File>,
-    index: &mut BTreeMap<String, CommandPos>,
+    index: &DashMap<String, CommandPos>,
 ) -> Result<u64> {
     let mut pos = reader.seek(io::SeekFrom::Start(0))?;
     let mut stream = Deserializer::from_reader(reader).into_iter::<Command>();
@@ -157,7 +152,7 @@ fn load(
             }
             Command::Rm { key } => {
                 if let Some(old_cmd) = index.remove(&key) {
-                    uncompacted_size += old_cmd.len;
+                    uncompacted_size += old_cmd.1.len;
                 } else {
                     uncompacted_size += new_pos - pos;
                 }
@@ -280,7 +275,7 @@ impl KvStoreReader {
     fn from_walfiles(
         path: &Path,
         walfile_nums: Vec<u64>,
-        index: &mut BTreeMap<String, CommandPos>,
+        index: &DashMap<String, CommandPos>,
     ) -> Result<Self> {
         let readers = DashMap::new();
         for walfile_num in walfile_nums {
@@ -339,17 +334,15 @@ struct KvStoreWriter {
     // number of bytes that can be saved by compaction
     uncompacted: u64,
     path: Arc<PathBuf>,
-    index: Arc<Mutex<BTreeMap<String, CommandPos>>>,
+    index: Arc<DashMap<String, CommandPos>>,
 }
-
-// do the compaction here only
 
 impl KvStoreWriter {
     fn new(
         path: &Path,
         active_wal: u64,
         reader: Arc<KvStoreReader>,
-        index: Arc<Mutex<BTreeMap<String, CommandPos>>>,
+        index: Arc<DashMap<String, CommandPos>>,
     ) -> Result<Self> {
         Ok(Self {
             reader,
@@ -376,9 +369,8 @@ impl KvStoreWriter {
             pos,
             len: new_pos - pos,
         };
-        if let Some(old_cmd) = self.index.lock().unwrap().insert(key, cmd_pos) {
+        if let Some(old_cmd) = self.index.insert(key, cmd_pos) {
             self.uncompacted += old_cmd.len;
-            // check for compaction here
         }
         Ok(())
     }
@@ -386,7 +378,7 @@ impl KvStoreWriter {
     fn remove(&mut self, key: String) -> Result<()> {
         let cmd = Command::Rm { key: key.clone() };
         serde_json::to_writer(&mut self.writer, &cmd)?;
-        if let Some(cmd) = self.index.lock().unwrap().remove(&key) {
+        if let Some((_, cmd)) = self.index.remove(&key) {
             self.uncompacted += cmd.len;
             return Ok(());
         } else {
@@ -405,9 +397,8 @@ impl KvStoreWriter {
         self.reader.add_reader(self.active_wal).unwrap();
 
         let mut pos: u64 = 0;
-        let mut index = self.index.lock().unwrap();
 
-        for cmd_pos in index.values_mut() {
+        for mut cmd_pos in self.index.iter_mut() {
             if cmd_pos.walfile_num >= compaction_walfile_num {
                 continue;
             }
@@ -423,7 +414,7 @@ impl KvStoreWriter {
 
             let mut cmd_reader = reader.by_ref().take(cmd_pos.len);
             let len = io::copy(&mut cmd_reader, &mut compaction_writer).expect("unable to copy");
-            *cmd_pos = CommandPos {
+            *cmd_pos.value_mut() = CommandPos {
                 walfile_num: compaction_walfile_num,
                 pos,
                 len,
